@@ -1,0 +1,5 @@
+firmware/gamepad/secrets.h
+data/
+data_SIMULASI/
+hasil_analisis*/
+__pycache__/

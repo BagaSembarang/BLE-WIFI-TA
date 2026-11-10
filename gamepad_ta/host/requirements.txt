@@ -1,0 +1,5 @@
+pyserial>=3.5
+bleak>=0.21
+numpy
+scipy>=1.8
+matplotlib
