@@ -50,7 +50,7 @@
 #define BLE_NAME       "GAMEPAD-ESP32"
 #define BLE_SERVICE_UUID  "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define BLE_CHAR_TX_UUID  "beb5483e-36e1-4688-b7f5-ea07361b26a8"   // ESP32 -> laptop (notify)
-#define BLE_CHAR_RX_UUID  "d29759bc-4b6f-45a6-8e5s0-96f7e44fa70c"   // laptop -> ESP32 (write no response)
+#define BLE_CHAR_RX_UUID  "d29759bc-4b6f-45a6-8e50-96f7e44fa70c"   // laptop -> ESP32 (write no response)
 
 #define PKT_LEN          32
 #define ECHO_LEN         8
@@ -497,7 +497,7 @@ void setup() {
   cmdMutex = xSemaphoreCreateMutex();
 
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(true);                 // matikan hemat daya Wi-Fi untuk latency rendah (bila didukung coexistence)
+  WiFi.setSleep(true);   // modem sleep WAJIB saat BLE dan Wi-Fi aktif bersamaan (batasan coexistence ESP32)
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   for (int i = 0; i < 60 && WiFi.status() != WL_CONNECTED; i++) delay(200);   // tunggu maks 12 detik
