@@ -61,6 +61,21 @@ class Host:
         self.rows = []
         self.stale = 0
         self.bad = 0
+        self.injeksi = None    # dict: link, jenis (tunda|buang|putus), nilai, mulai_s, selesai_s
+
+    def aksi_injeksi(self, link, t_ns):
+        """Kembalikan (buang: bool, tunda_s: float) untuk echo ini. Hanya untuk uji fungsional."""
+        f = self.injeksi
+        if not f or link != f["link"]:
+            return False, 0.0
+        dt = (t_ns - self.t0) / 1e9
+        if not (f["mulai_s"] <= dt < f["selesai_s"]):
+            return False, 0.0
+        if f["jenis"] == "putus":
+            return True, 0.0
+        if f["jenis"] == "buang":
+            return self.rnd_inj.random() < f["nilai"] / 100.0, 0.0
+        return False, f["nilai"] / 1000.0      # tunda (ms)
 
     def begin(self, sid):
         self.sid, self.rows, self.stale, self.bad = sid, [], 0, 0
@@ -114,8 +129,20 @@ class UdpProto(asyncio.DatagramProtocol):
         if r is None:
             return
         echo, typ, seq, flags = r
+        buang, tunda = self.host.aksi_injeksi(self.link_id, t)
+        if buang:
+            self.host.log(typ, self.link_id, seq, t, t, flags | 8)       # echo dibuang oleh injeksi
+            return
+        if tunda > 0:
+            asyncio.get_running_loop().call_later(tunda, self._kirim_tunda, echo, typ, seq, t, flags | 8, int(tunda * 1e9))
+            return
         self.transport.sendto(echo, self.esp_addr)
         self.host.log(typ, self.link_id, seq, t, time.perf_counter_ns(), flags)
+
+    def _kirim_tunda(self, echo, typ, seq, t, flags, tunda_ns):
+        self.transport.sendto(echo, self.esp_addr)
+        # waktu proses laptop dicatat TANPA tunda injeksi, agar tunda terhitung sebagai latency link
+        self.host.log(typ, self.link_id, seq, t, time.perf_counter_ns() - tunda_ns, flags)
 
     def error_received(self, exc):
         pass
@@ -133,21 +160,68 @@ class BleLink:
 
     def __init__(self, host):
         self.host, self.client, self.inflight = host, None, 0
+        self._jaga = None            # tugas latar: sambung ulang otomatis bila BLE putus
+        self._menyambung = False
 
     @property
     def connected(self):
         return self.client is not None and self.client.is_connected
 
-    async def connect(self, timeout=15.0):
+    def _on_putus(self, _client):
+        print("  [BLE terputus, mencoba menyambung ulang di latar]", flush=True)
+
+    async def connect(self, timeout=15.0, percobaan=3):
         from bleak import BleakScanner, BleakClient
-        dev = await BleakScanner.find_device_by_name(BLE_NAME, timeout=timeout)
-        if dev is None:
-            raise RuntimeError(f"ESP32 '{BLE_NAME}' tidak ditemukan lewat BLE. Pastikan Bluetooth laptop aktif dan "
-                               f"perangkat tidak sedang terhubung ke aplikasi lain. Bila baru flash ulang, hapus "
-                               f"perangkat itu dari Pengaturan Bluetooth Windows lalu coba lagi.")
-        self.client = BleakClient(dev)
-        await self.client.connect()
-        await self.client.start_notify(BLE_TX_UUID, self._on_notify)
+        galat = None
+        for _ in range(percobaan):
+            try:
+                if self.client is not None:
+                    try:
+                        await self.client.disconnect()
+                    except Exception:
+                        pass
+                dev = await BleakScanner.find_device_by_name(BLE_NAME, timeout=timeout)
+                if dev is None:
+                    galat = "perangkat tidak ditemukan saat pemindaian"
+                    continue
+                client = BleakClient(dev, disconnected_callback=self._on_putus)
+                await client.connect()
+                await client.start_notify(BLE_TX_UUID, self._on_notify)
+                self.client = client
+                return
+            except Exception as e:
+                galat = e
+                await asyncio.sleep(1.0)
+        raise RuntimeError(f"ESP32 '{BLE_NAME}' tidak bisa disambung lewat BLE ({galat}). Pastikan Bluetooth laptop aktif dan "
+                           f"perangkat tidak sedang terhubung ke aplikasi lain. Bila baru flash ulang, hapus "
+                           f"perangkat itu dari Pengaturan Bluetooth Windows lalu coba lagi.")
+
+    def mulai_jaga(self):
+        """Sambung ulang otomatis selama program berjalan, termasuk di tengah sesi (berlaku sama untuk semua metode)."""
+        if self._jaga is None:
+            self._jaga = asyncio.ensure_future(self._loop_jaga())
+
+    async def _loop_jaga(self):
+        while True:
+            await asyncio.sleep(1.0)
+            if self.connected or self._menyambung:
+                continue
+            self._menyambung = True
+            try:
+                await self.connect(timeout=4.0, percobaan=1)
+                print("  [BLE tersambung kembali]", flush=True)
+            except Exception:
+                pass
+            finally:
+                self._menyambung = False
+
+    async def tunggu_tersambung(self, batas_s=25.0):
+        t_end = time.time() + batas_s
+        while time.time() < t_end:
+            if self.connected:
+                return True
+            await asyncio.sleep(0.5)
+        return self.connected
 
     def _on_notify(self, _sender, data):
         t = time.perf_counter_ns()
@@ -155,22 +229,34 @@ class BleLink:
         if r is None:
             return
         echo, typ, seq, flags = r
+        buang, tunda = self.host.aksi_injeksi(LINK_BLE, t)
+        if buang:
+            self.host.log(typ, LINK_BLE, seq, t, t, flags | 8)           # echo dibuang oleh injeksi
+            return
+        if tunda > 0:
+            asyncio.get_running_loop().call_later(tunda, self._kirim, echo, typ, seq, t, flags | 8, int(tunda * 1e9))
+            return
+        self._kirim(echo, typ, seq, t, flags, 0)
+
+    def _kirim(self, echo, typ, seq, t, flags, tunda_ns):
         if self.inflight >= self.MAX_INFLIGHT:
             self.host.log(typ, LINK_BLE, seq, t, t, flags | 2)    # echo dibuang (laptop kewalahan)
             return
         self.inflight += 1
-        asyncio.ensure_future(self._echo(echo, typ, seq, t, flags))
+        asyncio.ensure_future(self._echo(echo, typ, seq, t, flags, tunda_ns))
 
-    async def _echo(self, echo, typ, seq, t_rx, flags):
+    async def _echo(self, echo, typ, seq, t_rx, flags, tunda_ns=0):
         try:
             await self.client.write_gatt_char(BLE_RX_UUID, echo, response=False)
         except Exception:
             flags |= 4
         finally:
             self.inflight -= 1
-        self.host.log(typ, LINK_BLE, seq, t_rx, time.perf_counter_ns(), flags)
+        self.host.log(typ, LINK_BLE, seq, t_rx, time.perf_counter_ns() - tunda_ns, flags)
 
     async def close(self):
+        if self._jaga is not None:
+            self._jaga.cancel()
         try:
             if self.client:
                 await self.client.disconnect()
@@ -440,9 +526,33 @@ def rencana(mode_arg, ulang, seed):
     return plan
 
 
+async def status_siap(esp, butuh_ble, batas_s=8.0):
+    """Minta STATUS berulang sampai ESP32 melaporkan BLE tersambung (ESP32 butuh sesaat setelah sambung ulang)."""
+    t_end = time.time() + batas_s
+    while True:
+        s = parse_kv(await esp.command("STATUS", "#STATUS") or "")
+        if not butuh_ble or s.get("ble") == "1" or time.time() > t_end:
+            return s
+        await asyncio.sleep(0.5)
+
+
 async def main_async(a):
     loop = asyncio.get_running_loop()
     host = Host()
+    if a.injeksi:
+        try:
+            lk, jn, nv, rentang = a.injeksi.split(":")
+            m0, m1 = rentang.split("-")
+            host.injeksi = {"link": {"ble": LINK_BLE, "wifi": LINK_WIFI}[lk.lower()], "link_nama": lk.lower(),
+                            "jenis": jn.lower(), "nilai": float(nv), "mulai_s": float(m0), "selesai_s": float(m1)}
+            if host.injeksi["jenis"] not in ("tunda", "buang", "putus"):
+                raise ValueError
+        except (ValueError, KeyError):
+            sys.exit("Format --injeksi salah. Contoh: ble:tunda:200:20-40  |  ble:buang:30:20-40  |  wifi:putus:0:20-40")
+        host.rnd_inj = random.Random(12345)
+        if not a.skenario.upper().startswith("UJI"):
+            sys.exit("--injeksi hanya untuk uji fungsional. Pakai label skenario berawalan UJI, mis. --skenario UJI_INJEKSI")
+        print(f"*** INJEKSI GANGGUAN AKTIF: {a.injeksi} (data ini BUKAN data perbandingan skripsi) ***")
     # Kedua link SELALU disambungkan (beban probe di kedua radio sama pada semua metode).
     perlu_ble = not a.tanpa_ble
     perlu_wifi = True
@@ -512,7 +622,11 @@ async def main_async(a):
         else:
             print(f"Mencari ESP32 '{BLE_NAME}' lewat BLE ...")
             ble = BleLink(host)
-            await ble.connect()
+            try:
+                await ble.connect()
+            except RuntimeError as e:
+                sys.exit(str(e))
+            ble.mulai_jaga()
             print("  BLE terhubung.")
 
     bagian = []
@@ -554,13 +668,16 @@ async def main_async(a):
             await loop.run_in_executor(None, input,
                 f"[{i}/{len(plan)}] Siap: skenario {a.skenario}, metode {label.upper()}, ulangan {rep}. "
                 f"Atur kondisi uji lalu tekan Enter untuk mulai... ")
-        # cek link sebelum mulai
-        s = parse_kv(await esp.command("STATUS", "#STATUS") or "")
-        if mode in (0, 2) and not a.ble_sim and ble is not None and not ble.connected:
-            print("  BLE terputus, menyambung ulang ...")
-            await ble.connect()
-        if mode in (0, 2) and s.get("ble") == "0" and not a.ble_sim:
-            sys.exit("ESP32 melaporkan BLE tidak terhubung. Hentikan, cek Bluetooth, lalu jalankan ulang.")
+        # cek link sebelum mulai (semua metode butuh kedua link aktif: beban probe sama di semua metode)
+        if not a.ble_sim and ble is not None and not ble.connected:
+            print("  BLE belum tersambung, menunggu sambung ulang (maks 25 dtk) ...", flush=True)
+            if not await ble.tunggu_tersambung(25.0):
+                sys.exit("BLE tidak bisa disambung ulang. Pastikan Bluetooth laptop menyala, lalu jalankan ulang perintah "
+                         "dengan --mode/--ulang sesuai sesi yang belum selesai.")
+        s = await status_siap(esp, butuh_ble=not a.ble_sim and ble is not None)
+        if not a.ble_sim and ble is not None and s.get("ble") != "1":
+            sys.exit("ESP32 melaporkan BLE tidak terhubung walau laptop sudah tersambung. Matikan lalu nyalakan Bluetooth "
+                     "laptop, atau cabut-colok adaptor ESP32, lalu jalankan ulang.")
         if mode in (1, 2) and (s.get("wifi") != "1" or s.get("hello") != "1"):
             sys.exit("Jalur Wi-Fi ESP32 tidak aktif (belum tersambung ke router atau belum ada HELLO dari laptop).")
         sid = (sid0 + i) % 256
@@ -582,7 +699,7 @@ async def main_async(a):
             "skenario": a.skenario, "mode": mode, "mode_nama": nama, "metode_label": label, "varian": a.varian, "kontrol": kontrol,
             "laptop_koneksi": a.laptop_koneksi, "esp_ip": a.esp_ip, "ulangan": rep, "urutan_ke": i,
             "durasi_s": a.durasi, "sid": sid, "mulai": t_iso, "jarak": a.jarak, "catatan": a.catatan,
-            "simulasi": simulasi, "valid": ok, "pesan_validasi": pesan,
+            "simulasi": simulasi, "valid": ok, "pesan_validasi": pesan, "injeksi": host.injeksi,
             "firmware": pong, "begin": begin, "params": params_line, "status_awal": status_line,
             "host": {"os": platform.platform(), "python": sys.version.split()[0],
                      "paket_basi": host.stale, "paket_salah_ukuran": host.bad},
@@ -623,6 +740,10 @@ def main():
     ap.add_argument("--seed", type=int, help="seed urutan acak (agar urutan bisa diulang)")
     ap.add_argument("--tanpa-jeda", action="store_true", help="jalan terus tanpa menunggu Enter")
     ap.add_argument("--tanpa-ble", action="store_true", help="uji awal Wi-Fi saja (hanya dengan --mode wifi); jangan dipakai untuk data skripsi")
+    ap.add_argument("--injeksi", default=None, metavar="LINK:JENIS:NILAI:MULAI-SELESAI",
+                    help="UJI FUNGSIONAL SAJA (bukan data perbandingan): ganggu echo di laptop. "
+                         "LINK=ble|wifi, JENIS=tunda (ms) | buang (persen) | putus (nilai diabaikan), waktu dalam detik sesi. "
+                         "Contoh: ble:tunda:200:20-40, ble:buang:30:20-40, ble:putus:0:20-40")
     ap.add_argument("--ble-sim", action="store_true", help="HANYA untuk uji dengan simulator")
     a = ap.parse_args()
     if not 5 <= a.durasi <= 120:

@@ -195,25 +195,73 @@ def ci95(x):
     return float(stats.t.ppf(0.975, len(x) - 1) * x.std(ddof=1) / np.sqrt(len(x)))
 
 
-def tulis_kelompok(rows, path):
+def kelompok(rows):
+    """Rata-rata, sd, CI 95% per skenario x metode x metrik (dipakai juga oleh dashboard)."""
     grup = {}
     for r in rows:
         grup.setdefault((r["skenario"], r["metode"]), []).append(r)
+    out = []
+    for (sk, md), rs in sorted(grup.items()):
+        for key, _ in METRIK_UTAMA:
+            v = np.array([r.get(key, np.nan) for r in rs], float)
+            v = v[~np.isnan(v)]
+            if len(v) == 0:
+                continue
+            out.append({"skenario": sk, "metode": md, "n_percobaan": len(v), "metrik": key,
+                        "rata2": round(v.mean(), 4), "sd": round(v.std(ddof=1), 4) if len(v) > 1 else "",
+                        "ci95_setengah_lebar": round(ci95(v), 4), "min": round(v.min(), 4), "maks": round(v.max(), 4)})
+    return out
+
+
+def tulis_kelompok(rows, path):
+    kol = ["skenario", "metode", "n_percobaan", "metrik", "rata2", "sd", "ci95_setengah_lebar", "min", "maks"]
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f, lineterminator="\n")
-        w.writerow(["skenario", "metode", "n_percobaan", "metrik", "rata2", "sd", "ci95_setengah_lebar", "min", "maks"])
-        for (sk, md), rs in sorted(grup.items()):
-            for key, _ in METRIK_UTAMA:
-                v = np.array([r.get(key, np.nan) for r in rs], float)
-                v = v[~np.isnan(v)]
-                if len(v) == 0:
-                    continue
-                w.writerow([sk, md, len(v), key, round(v.mean(), 4), round(v.std(ddof=1), 4) if len(v) > 1 else "",
-                            round(ci95(v), 4), round(v.min(), 4), round(v.max(), 4)])
+        w.writerow(kol)
+        for r in kelompok(rows):
+            w.writerow([r[k] for k in kol])
+
+
+def uji_metrik(rs, key):
+    """Uji satu metrik antar metode dalam satu skenario. Kembalikan dict, atau None bila kelompok < 2."""
+    from scipy import stats
+    g = {}
+    for r in rs:
+        v = r.get(key, np.nan)
+        if v is not None and not (isinstance(v, float) and np.isnan(v)):
+            g.setdefault(r["metode"], []).append(float(v))
+    g = {k: np.array(v) for k, v in g.items() if len(v) >= 2}
+    if len(g) < 2:
+        return None
+    names = [k for k, _ in sorted(g.items())]
+    groups = [v for _, v in sorted(g.items())]
+    hasil = {"key": key, "grup": [(k, len(v), float(v.mean()), float(v.std(ddof=1))) for k, v in zip(names, groups)],
+             "identik": False, "F": None, "p": None, "eta2": None, "H": None, "p_kw": None, "tukey": [], "shapiro_p": None}
+    if all(np.ptp(v) == 0 for v in groups) and len({v[0] for v in groups}) == 1:
+        hasil["identik"] = True
+        return hasil
+    F, p = stats.f_oneway(*groups)
+    allv = np.concatenate(groups)
+    ss_b = sum(len(v) * (v.mean() - allv.mean()) ** 2 for v in groups)
+    ss_t = ((allv - allv.mean()) ** 2).sum()
+    hasil.update(F=float(F), p=float(p), eta2=float(ss_b / ss_t) if ss_t > 0 else float("nan"))
+    try:
+        H, pk = stats.kruskal(*groups)
+        hasil.update(H=float(H), p_kw=float(pk))
+    except ValueError:
+        pass
+    if len(groups) >= 3 and p < 0.05:
+        res = stats.tukey_hsd(*groups)
+        for i in range(len(names)):
+            for j in range(i + 1, len(names)):
+                hasil["tukey"].append((names[i], names[j], float(groups[i].mean() - groups[j].mean()), float(res.pvalue[i][j])))
+    resid = np.concatenate([v - v.mean() for v in groups])
+    if len(resid) >= 8 and np.ptp(resid) > 0:
+        hasil["shapiro_p"] = float(stats.shapiro(resid).pvalue)
+    return hasil
 
 
 def uji_statistik(rows, path):
-    from scipy import stats
     L = []
     L.append("UJI STATISTIK - satuan analisis = percobaan (bukan paket)")
     L.append("H0: tidak ada perbedaan rata-rata metrik antar metode komunikasi. alpha = 0.05\n")
@@ -224,46 +272,25 @@ def uji_statistik(rows, path):
         L.append(f"SKENARIO {sk}")
         L.append("=" * 78)
         for key, label in METRIK_UTAMA:
-            g = {}
-            for r in rs:
-                v = r.get(key, np.nan)
-                if v is not None and not (isinstance(v, float) and np.isnan(v)):
-                    g.setdefault(r["metode"], []).append(float(v))
-            g = {k: np.array(v) for k, v in g.items() if len(v) >= 2}
-            if len(g) < 2:
+            u = uji_metrik(rs, key)
+            if u is None:
                 continue
             L.append(f"\n{label}  [{key}]")
-            for k, v in sorted(g.items()):
-                L.append(f"   {k:8s} n={len(v):2d}  rata2={v.mean():10.3f}  sd={v.std(ddof=1):9.3f}")
-            groups = [v for _, v in sorted(g.items())]
-            names = [k for k, _ in sorted(g.items())]
-            if all(np.ptp(v) == 0 for v in groups) and len({v[0] for v in groups}) == 1:
+            for k, n, mean, sd in u["grup"]:
+                L.append(f"   {k:8s} n={n:2d}  rata2={mean:10.3f}  sd={sd:9.3f}")
+            if u["identik"]:
                 L.append("   (semua nilai identik, uji tidak relevan)")
                 continue
-            F, p = stats.f_oneway(*groups)
-            allv = np.concatenate(groups)
-            ss_b = sum(len(v) * (v.mean() - allv.mean()) ** 2 for v in groups)
-            ss_t = ((allv - allv.mean()) ** 2).sum()
-            eta2 = ss_b / ss_t if ss_t > 0 else float("nan")
-            L.append(f"   ANOVA satu arah: F={F:.3f}  p={p:.4g}  eta^2={eta2:.3f}  -> {'BEDA signifikan' if p < 0.05 else 'tidak beda signifikan'}")
-            try:
-                H, pk = stats.kruskal(*groups)
-                L.append(f"   Kruskal-Wallis (tanpa asumsi normal): H={H:.3f}  p={pk:.4g}")
-            except ValueError:
-                pass
-            if len(groups) >= 3 and p < 0.05:
-                res = stats.tukey_hsd(*groups)
-                for i in range(len(names)):
-                    for j in range(i + 1, len(names)):
-                        beda = groups[i].mean() - groups[j].mean()
-                        L.append(f"   Tukey {names[i]} vs {names[j]}: selisih rata2={beda:+.3f}  p={res.pvalue[i][j]:.4g}  "
-                                 f"{'*' if res.pvalue[i][j] < 0.05 else ''}")
-            elif len(groups) == 2 and p < 0.05:
+            L.append(f"   ANOVA satu arah: F={u['F']:.3f}  p={u['p']:.4g}  eta^2={u['eta2']:.3f}  -> {'BEDA signifikan' if u['p'] < 0.05 else 'tidak beda signifikan'}")
+            if u["H"] is not None:
+                L.append(f"   Kruskal-Wallis (tanpa asumsi normal): H={u['H']:.3f}  p={u['p_kw']:.4g}")
+            for a, b, beda, pt in u["tukey"]:
+                L.append(f"   Tukey {a} vs {b}: selisih rata2={beda:+.3f}  p={pt:.4g}  {'*' if pt < 0.05 else ''}")
+            if len(u["grup"]) == 2 and u["p"] < 0.05:
                 L.append("   (dua kelompok: ANOVA setara uji-t; tidak perlu post-hoc)")
-            resid = np.concatenate([v - v.mean() for v in groups])
-            if len(resid) >= 8 and np.ptp(resid) > 0:
-                sh = stats.shapiro(resid)
-                L.append(f"   Shapiro-Wilk residual: p={sh.pvalue:.3g}  -> {'normalitas ditolak, utamakan Kruskal-Wallis' if sh.pvalue < 0.05 else 'normalitas tidak ditolak'}")
+            if u["shapiro_p"] is not None:
+                sp = u["shapiro_p"]
+                L.append(f"   Shapiro-Wilk residual: p={sp:.3g}  -> {'normalitas ditolak, utamakan Kruskal-Wallis' if sp < 0.05 else 'normalitas tidak ditolak'}")
         L.append("")
     L.append("Catatan: jumlah percobaan per kelompok kecil, sehingga kekuatan uji terbatas. "
              "Laporkan ukuran efek (eta^2) dan CI 95%, bukan hanya nilai p.")
@@ -271,7 +298,7 @@ def uji_statistik(rows, path):
     return "\n".join(L)
 
 
-def tulis_pemicu(hasil, outdir):
+def baris_pemicu(hasil):
     """Satu baris per perpindahan: kondisi apa yang memicu (latency/loss/jitter/RSSI/putus) dan nilainya."""
     baris = []
     for folder, meta, m in hasil:
@@ -291,6 +318,11 @@ def tulis_pemicu(hasil, outdir):
                 "p90_rtt_ms": int(r["p90_rtt_x10_ms"]) / 10.0, "latency_satu_arah_p90_ms": int(r["p90_rtt_x10_ms"]) / 20.0,
                 "loss_persen": int(r["loss_x10_persen"]) / 10.0, "jitter_ms": int(r["jitter_x10_ms"]) / 10.0,
                 "rssi_dbm": int(r["rssi_dbm"]), "durasi_handover_ms": ho})
+    return baris
+
+
+def tulis_pemicu(hasil, outdir):
+    baris = baris_pemicu(hasil)
     if not baris:
         return
     with open(os.path.join(outdir, "pemicu_switching.csv"), "w", newline="", encoding="utf-8") as f:
@@ -309,7 +341,6 @@ def tulis_pemicu(hasil, outdir):
             w.writerow([sk, md, ar, pm, len(bs), round(np.mean([b["latency_satu_arah_p90_ms"] for b in bs]), 1),
                         round(np.mean([b["loss_persen"] for b in bs]), 2), round(np.mean([b["jitter_ms"] for b in bs]), 1),
                         round(np.mean([b["rssi_dbm"] for b in bs]), 1), round(float(np.median(dur)), 1) if dur else ""])
-
 
 def grafik(hasil, rows, outdir, label_prefix):
     import matplotlib
