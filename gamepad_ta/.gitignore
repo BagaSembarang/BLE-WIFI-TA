@@ -1,4 +1,4 @@
 firmware/gamepad/secrets.h
 data_SIMULASI/
-**/data/UJI*/
+# **/data/UJI*/
 __pycache__/

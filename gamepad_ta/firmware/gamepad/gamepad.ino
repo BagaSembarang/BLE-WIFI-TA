@@ -41,7 +41,7 @@
 #include "adaptive_core.h"
 #include "secrets.h"      // WIFI_SSID dan WIFI_PASS (JANGAN di-commit ke repo publik)
 
-#define FW_VERSION "gp-2.0"
+#define FW_VERSION "gp-2.1"
 
 // ---------------- Konfigurasi (ubah di sini) ----------------
 #define I2C_SDA        2        // ESP32-C3 (sama dengan firmware lama)
@@ -122,6 +122,7 @@ static void dadd(uint8_t chan, const char* fmt, ...) {
 
 // Status link
 static volatile bool bleConnected = false, hasBda = false, hostKnown = false;
+static volatile bool bleBaruSambung = false;     // diset callback BLE, dibaca txTask (masa stabilisasi link)
 static volatile int8_t bleRssi = -99, wifiRssi = -99;
 static esp_bd_addr_t remoteBda;
 static BLECharacteristic* pTx = nullptr;
@@ -146,6 +147,7 @@ static KV kvs[] = {
   {"dwell_ms", &core.p.dwell_ms, 'u'}, {"emerg_gap_ms", &core.p.emerg_gap_ms, 'u'},
   {"standby_alive_ms", &core.p.standby_alive_ms, 'u'}, {"emerg_min_score", &core.p.emerg_min_score, 'f'}, {"preferred", &core.p.preferred, 'b'},
   {"miss_timeout_ms", &core.p.miss_timeout_ms, 'u'}, {"emerg_silence_ms", &core.p.emerg_silence_ms, 'u'},
+  {"settle_ms", &core.p.settle_ms, 'u'},
 };
 #define NKV (sizeof(kvs) / sizeof(kvs[0]))
 
@@ -200,7 +202,7 @@ static void gapCallback(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* pa
 }
 class SrvCb : public BLEServerCallbacks {
   void onConnect(BLEServer* s, esp_ble_gatts_cb_param_t* param) {
-    bleConnected = true;
+    bleConnected = true; bleBaruSambung = true;
     memcpy(remoteBda, param->connect.remote_bda, sizeof(esp_bd_addr_t)); hasBda = true;
     esp_ble_conn_update_params_t cp; memset(&cp, 0, sizeof(cp));
     memcpy(cp.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
@@ -354,6 +356,7 @@ static void txTask(void*) {
       nextData = nextProbe = now; nextRssi = now; nextQ = now + 100000;
     }
     lastState = st;
+    if (bleBaruSambung) { bleBaruSambung = false; core.onLinkUp(AC_LINK_BLE, relMs(now)); }
     scanMisses(now);
     if (sessMode == MODE_ADAPT && st == ST_RUN && core.evaluate(relMs(now))) {
       const AcDetail& d = core.last_detail;

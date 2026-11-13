@@ -39,6 +39,7 @@ BLE_RX_UUID = "d29759bc-4b6f-45a6-8e50-96f7e44fa70c"   # laptop -> ESP32 (write 
 UDP_ESP_PORT = 4210
 UDP_SIM_BLE_PORT = 4213   # hanya untuk simulator
 TCP_PORT = 4212           # kanal kendali TCP (mode adaptor, tanpa kabel USB ke laptop)
+STABIL_BLE_S = 6.0        # jeda setelah BLE tersambung (ulang) sebelum sesi dimulai (sama dengan settle_ms firmware)
 
 
 def parse_kv(line):
@@ -162,6 +163,7 @@ class BleLink:
         self.host, self.client, self.inflight = host, None, 0
         self._jaga = None            # tugas latar: sambung ulang otomatis bila BLE putus
         self._menyambung = False
+        self.t_sambung = 0.0         # waktu (time.time) BLE terakhir tersambung
 
     @property
     def connected(self):
@@ -188,6 +190,7 @@ class BleLink:
                 await client.connect()
                 await client.start_notify(BLE_TX_UUID, self._on_notify)
                 self.client = client
+                self.t_sambung = time.time()
                 return
             except Exception as e:
                 galat = e
@@ -401,7 +404,32 @@ class EspTcp(EspBase):
 
 
 # --------------------------------------------------------------------------- percobaan
-async def jalankan_sesi(esp, host, mode, sid, dur):
+def _bunyi():
+    try:
+        import winsound
+        winsound.Beep(1200, 350)
+    except Exception:
+        print("\a", end="", flush=True)
+
+
+async def isyarat(jadwal, t0):
+    """Aba-aba untuk operator (mis. mematikan/menyalakan Bluetooth laptop) pada detik tertentu sejak sesi dimulai.
+    Hitung mundur 3-2-1 lalu bunyi. Bunyi dijalankan di thread terpisah agar echo paket tidak tertunda."""
+    loop = asyncio.get_running_loop()
+    for t_s, pesan in jadwal:
+        for k in (3, 2, 1):
+            tunggu = t0 + t_s - k - time.time()
+            if tunggu > 0:
+                await asyncio.sleep(tunggu)
+                print(f"     {pesan} dalam {k} ...", flush=True)
+        tunggu = t0 + t_s - time.time()
+        if tunggu > 0:
+            await asyncio.sleep(tunggu)
+        print(f"  >>> DETIK {t_s:g}: {pesan} SEKARANG <<<", flush=True)
+        loop.run_in_executor(None, _bunyi)
+
+
+async def jalankan_sesi(esp, host, mode, sid, dur, jadwal=None):
     host.begin(sid)
     esp.flush_input()
     try:
@@ -421,6 +449,7 @@ async def jalankan_sesi(esp, host, mode, sid, dur):
             host.end()
             raise RuntimeError("ESP32 tidak membalas START (#ACK). Cek kanal kendali (kabel atau Wi-Fi).")
     t_start = time.time()
+    tugas_isyarat = asyncio.ensure_future(isyarat(jadwal, t_start)) if jadwal else None
     kosong = lambda: {"D": [], "P": [], "Q": [], "E": []}
     begin, rows = None, kosong()
     deadline = t_start + dur + 150
@@ -455,6 +484,8 @@ async def jalankan_sesi(esp, host, mode, sid, dur):
         if len(line) > 2 and line[1] == "," and line[0] in rows:
             rows[line[0]].append(line[2:].split(","))
     host.end()
+    if tugas_isyarat is not None:
+        tugas_isyarat.cancel()
     if begin is None:
         raise RuntimeError("Tidak menerima #BEGIN dari ESP32 (sesi tidak selesai atau kanal kendali terputus).")
     return begin, rows, time.time() - t_start
@@ -660,6 +691,19 @@ async def main_async(a):
     perkiraan = len(plan) * (a.durasi + 8) / 60
     print(f"Perkiraan waktu total tanpa jeda: {perkiraan:.0f} menit.\n")
 
+    jadwal = None
+    if a.isyarat_bt:
+        try:
+            t_mati, t_nyala = (float(x) for x in a.isyarat_bt.split(","))
+        except ValueError:
+            sys.exit("Format --isyarat-bt salah. Contoh: --isyarat-bt 20,35  (matikan detik 20, nyalakan detik 35)")
+        if not (3 <= t_mati < t_nyala < a.durasi):
+            sys.exit("--isyarat-bt harus 3 <= detik mati < detik nyala < durasi sesi")
+        jadwal = [(t_mati, "MATIKAN Bluetooth laptop"), (t_nyala, "NYALAKAN Bluetooth laptop")]
+        print(f"Aba-aba aktif: matikan Bluetooth di detik {t_mati:g}, nyalakan di detik {t_nyala:g} (dengan bunyi).")
+        if a.tanpa_jeda:
+            print("  Catatan: tanpa --tanpa-jeda lebih aman, agar Anda siap sebelum tiap sesi dimulai.")
+
     ringkasan = []
     for i, (rep, mode) in enumerate(plan, 1):
         nama = MODE_NAMA[mode]
@@ -674,6 +718,11 @@ async def main_async(a):
             if not await ble.tunggu_tersambung(25.0):
                 sys.exit("BLE tidak bisa disambung ulang. Pastikan Bluetooth laptop menyala, lalu jalankan ulang perintah "
                          "dengan --mode/--ulang sesuai sesi yang belum selesai.")
+        if not a.ble_sim and ble is not None:
+            sisa = STABIL_BLE_S - (time.time() - ble.t_sambung)
+            if sisa > 0:
+                print(f"  BLE baru tersambung, menunggu {sisa:.0f} dtk agar koneksi stabil ...", flush=True)
+                await asyncio.sleep(sisa)
         s = await status_siap(esp, butuh_ble=not a.ble_sim and ble is not None)
         if not a.ble_sim and ble is not None and s.get("ble") != "1":
             sys.exit("ESP32 melaporkan BLE tidak terhubung walau laptop sudah tersambung. Matikan lalu nyalakan Bluetooth "
@@ -684,7 +733,7 @@ async def main_async(a):
         t_iso = datetime.now().isoformat(timespec="seconds")
         print(f"[{i}/{len(plan)}] {label.upper()} ulangan {rep} berjalan {a.durasi} dtk ...", flush=True)
         try:
-            begin, rows, wall = await jalankan_sesi(esp, host, mode, sid, a.durasi)
+            begin, rows, wall = await jalankan_sesi(esp, host, mode, sid, a.durasi, jadwal)
         except RuntimeError as e:
             print(f"  GAGAL: {e}")
             continue
@@ -704,6 +753,7 @@ async def main_async(a):
             "host": {"os": platform.platform(), "python": sys.version.split()[0],
                      "paket_basi": host.stale, "paket_salah_ukuran": host.bad},
             "rencana": {"seed": seed, "mode_arg": a.mode, "ulang": a.ulang},
+            "isyarat_bt": a.isyarat_bt or "",
         }
         simpan(folder, begin, rows, host, meta)
         ringkasan.append((nama, rep, ok))
@@ -744,6 +794,8 @@ def main():
                     help="UJI FUNGSIONAL SAJA (bukan data perbandingan): ganggu echo di laptop. "
                          "LINK=ble|wifi, JENIS=tunda (ms) | buang (persen) | putus (nilai diabaikan), waktu dalam detik sesi. "
                          "Contoh: ble:tunda:200:20-40, ble:buang:30:20-40, ble:putus:0:20-40")
+    ap.add_argument("--isyarat-bt", default="", metavar="MATI,NYALA",
+                    help="aba-aba bunyi untuk mematikan dan menyalakan Bluetooth laptop pada detik tertentu, mis. 20,35 (skenario S4)")
     ap.add_argument("--ble-sim", action="store_true", help="HANYA untuk uji dengan simulator")
     a = ap.parse_args()
     if not 5 <= a.durasi <= 120:

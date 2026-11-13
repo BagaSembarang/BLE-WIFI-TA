@@ -67,6 +67,10 @@ struct AcParams {
   uint32_t emerg_gap_ms  = 500;       // jarak minimum dari perpindahan sebelumnya
   uint32_t standby_alive_ms = 500;
   float    emerg_min_score = 50.0f;   // link tujuan darurat harus punya skor >= ini (bila sudah sah)
+  uint32_t settle_ms     = 6000;      // link yang baru tersambung (ulang) belum boleh DIPILIH lewat skor sebelum ini.
+                                      // Uji awal: setelah BLE tersambung ulang, probe 20 Hz sudah baik tetapi beban data
+                                      // 50 Hz masih tertunda 160-250 ms selama ~4-8 dtk (negosiasi koneksi), sehingga
+                                      // kembali terlalu cepat memicu bolak-balik. Jalur darurat tidak terpengaruh.
   uint8_t  preferred     = AC_LINK_BLE;
 };
 
@@ -155,6 +159,18 @@ class AdaptiveCore {
     score[0] = score[1] = -1.0f;
     last_reason = AC_REASON_NONE; last_cause = AC_CAUSE_NONE; last_from = last_to = initial;
     last_score_from = last_score_to = -1.0f; memset(&last_detail, 0, sizeof(last_detail));
+    fresh[0] = fresh[1] = false; up_ms[0] = up_ms[1] = now_ms;
+  }
+
+  // Dipanggil saat sebuah link tersambung (ulang) di tengah sesi: riwayat lama dibuang, masa stabilisasi dimulai.
+  void onLinkUp(uint8_t link, uint32_t now_ms) {
+    link &= 1;
+    win[link].clear();
+    fresh[link] = true; up_ms[link] = now_ms;
+  }
+  bool settled(uint8_t link, uint32_t now_ms) const {
+    link &= 1;
+    return !fresh[link] || (now_ms - up_ms[link]) >= p.settle_ms;
   }
 
   // Hasil satu paket: ok=true (echo kembali dalam miss_timeout, rtt_us valid) atau ok=false (hilang).
@@ -183,11 +199,11 @@ class AdaptiveCore {
       return doSwitch(now, AC_REASON_EMERGENCY, AC_CAUSE_OUTAGE, dA, sB);
 
     // 2) Tinggalkan link aktif yang memburuk
-    bool leaveCond = (sA >= 0 && sB >= 0 && sA < p.t_leave && sB >= sA + p.margin);
+    bool leaveCond = (sA >= 0 && sB >= 0 && sA < p.t_leave && sB >= sA + p.margin) && settled(b, now);
     leaveCnt = leaveCond ? (uint8_t)(leaveCnt + 1) : 0;
 
     // 3) Kembali ke link utama bila sudah pulih
-    bool retCond = (a != p.preferred) && sB >= p.t_return && (sA < 0 || sB >= sA - p.return_tol);
+    bool retCond = (a != p.preferred) && sB >= p.t_return && (sA < 0 || sB >= sA - p.return_tol) && settled(b, now);
     retCnt = retCond ? (uint8_t)(retCnt + 1) : 0;
 
     bool dwellOk = (now - lastSwitch) >= p.dwell_ms;
@@ -199,6 +215,8 @@ class AdaptiveCore {
  private:
   uint32_t lastEval, lastSwitch;
   uint8_t  leaveCnt, retCnt;
+  bool     fresh[2];
+  uint32_t up_ms[2];
 
   static uint8_t dominantCause(const AcDetail& d) {
     if (!d.valid) return AC_CAUSE_NONE;

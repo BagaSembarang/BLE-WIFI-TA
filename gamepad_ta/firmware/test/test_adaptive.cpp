@@ -15,11 +15,15 @@ static float nrand() { float s = 0; for (int i = 0; i < 12; i++) s += urand(); r
 struct Pending { uint32_t at; int link; bool ok; uint32_t rtt_us; bool activeData; };
 struct Result { int switches; uint32_t first_switch; int first_to; uint8_t first_reason, first_cause; std::vector<uint32_t> times; };
 
-static Result run(Scenario sc, uint32_t dur_ms, AcParams prm = AcParams()) {
-  AdaptiveCore c; c.p = prm; c.reset(0, AC_LINK_BLE);
+static int g_active = 0;            // link aktif saat ini (untuk skenario yang kualitasnya bergantung beban data)
+
+static Result run(Scenario sc, uint32_t dur_ms, AcParams prm = AcParams(), uint32_t bleUpAt = 0) {
+  AdaptiveCore c; c.p = prm; c.reset(0, AC_LINK_BLE); g_active = c.active;
   std::vector<Pending> pend; Result r{0, 0, -1, 0, 0, {}};
   uint32_t nextData = 0, nextProbe = 50, nextRssi = 0;
   for (uint32_t t = 0; t <= dur_ms; t++) {
+    if (bleUpAt && t == bleUpAt) c.onLinkUp(AC_LINK_BLE, t);
+    g_active = c.active;
     auto launch = [&](int link, bool activeData) {
       Chan ch = sc(t, link);
       bool lost = urand() < ch.loss;
@@ -102,6 +106,21 @@ int main() {
     Result r = run([&](uint32_t t, int l){ if (l == 1) return good_wifi; return t < 20000 ? good_ble : Chan{0.0f, 250, 30, -60}; }, 60000, p);
     printf("   switches=%d first=%u ms cause=%d\n", r.switches, r.first_switch, r.first_cause);
     CHECK("pindah dengan pemicu LATENCY", r.first_to == AC_LINK_WIFI && r.first_cause == AC_CAUSE_LATENCY); }
+
+  printf("K. BLE putus 20-35 s, tersambung ulang 35 s; 6,5 dtk pertama BLE baru sanggup probe, tidak sanggup beban data\n");
+  { auto sc = [&](uint32_t t, int l) -> Chan {
+      if (l == 1) return good_wifi;
+      if (t >= 20000 && t < 35000) return Chan{1.0f, 0, 0, -60};
+      if (t >= 35000 && t < 41500 && g_active == 0) return Chan{0.15f, 250, 40, -60};   // tertunda saat membawa data
+      return Chan{0.0f, 40, 8, -60}; };                                                   // probe saja: tampak sehat
+    Result r = run(sc, 70000, AcParams(), 35000);
+    printf("   dengan settle_ms=6000: switches=%d times:", r.switches); for (auto x : r.times) printf(" %u", x); printf("\n");
+    CHECK("tepat 2 perpindahan (tanpa bolak-balik)", r.switches == 2);
+    CHECK("kembali ke BLE setelah masa stabil (>= 41 s)", r.times.size() == 2 && r.times[1] >= 41000 && r.times[1] <= 47000);
+    AcParams p0; p0.settle_ms = 0;
+    Result r0 = run(sc, 70000, p0, 35000);
+    printf("   pembanding settle_ms=0: switches=%d times:", r0.switches); for (auto x : r0.times) printf(" %u", x); printf("\n");
+    CHECK("tanpa masa stabil terjadi bolak-balik (>2 perpindahan)", r0.switches > 2); }
 
   printf("\n%s (%d gagal)\n", fails ? "ADA YANG GAGAL" : "SEMUA UJI LULUS", fails);
   return fails ? 1 : 0;
