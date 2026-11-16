@@ -597,8 +597,57 @@ D:\Skripsi\sistem\gamepad_ta\host>
 
 
 
+D:\Skripsi\sistem\gamepad_ta\host>python eksperimen.py --mode semua --ulang 5 --durasi 60 --skenario S5 --jarak "1.5 m" --catatan "wifi lab jam sibuk" --laptop-koneksi wifi --seed 50 --tanpa-jeda
+Mode kendali Wi-Fi (ESP32 tanpa kabel USB ke laptop).
+Mencari ESP32 di jaringan ...
+ESP32 ditemukan di 192.168.44.181
+ESP32: #PONG fw=gp-2.1
+  Wi-Fi/UDP terhubung.
+Mencari ESP32 'GAMEPAD-ESP32' lewat BLE ...
+  BLE terhubung.
+Status: #STATUS state=0 ble=1 wifi=1 ip=192.168.44.181 ch=6 hello=1 bno=1 imuerr=1444 heap=89304 rssi_ble=-99 rssi_wifi=-99 tcp=1
+
+Rencana: 15 percobaan, durasi 60 dtk, skenario 'S5', urutan acak (seed 50).
+Perkiraan waktu total tanpa jeda: 17 menit.
+
+  BLE baru tersambung, menunggu 3 dtk agar koneksi stabil ...
+[1/15] BLE ulangan 1 berjalan 60 dtk ...
+  OK : paket 3000 | loss 0.00% (tak sampai laptop 0.00%) | RTT median 50.8 ms, p95 87.3 ms
+[2/15] ADAPTIF ulangan 1 berjalan 60 dtk ...
+  OK : paket 3000 | loss 0.00% (tak sampai laptop 0.00%) | RTT median 48.9 ms, p95 90.7 ms | pindah 0x
+[3/15] WIFI ulangan 1 berjalan 60 dtk ...
+  OK : paket 3000 | loss 1.67% (tak sampai laptop 0.00%) | RTT median 63.6 ms, p95 290.2 ms
+[4/15] ADAPTIF ulangan 2 berjalan 60 dtk ...
+  OK : paket 3000 | loss 0.00% (tak sampai laptop 0.00%) | RTT median 47.3 ms, p95 92.6 ms | pindah 0x
+[5/15] BLE ulangan 2 berjalan 60 dtk ...
+  OK : paket 3000 | loss 0.00% (tak sampai laptop 0.00%) | RTT median 47.3 ms, p95 90.5 ms
+[6/15] WIFI ulangan 2 berjalan 60 dtk ...
+  OK : paket 3000 | loss 8.40% (tak sampai laptop 0.00%) | RTT median 95.8 ms, p95 505.6 ms
+[7/15] BLE ulangan 3 berjalan 60 dtk ...
+  OK : paket 3000 | loss 0.00% (tak sampai laptop 0.00%) | RTT median 46.6 ms, p95 91.6 ms
+[8/15] WIFI ulangan 3 berjalan 60 dtk ...
+  OK : paket 3000 | loss 2.20% (tak sampai laptop 0.00%) | RTT median 44.6 ms, p95 189.0 ms
+[9/15] ADAPTIF ulangan 3 berjalan 60 dtk ...
+  OK : paket 3000 | loss 0.00% (tak sampai laptop 0.00%) | RTT median 49.9 ms, p95 93.2 ms | pindah 0x
+[10/15] ADAPTIF ulangan 4 berjalan 60 dtk ...
+  OK : paket 3000 | loss 0.00% (tak sampai laptop 0.00%) | RTT median 52.7 ms, p95 98.8 ms | pindah 0x
+[11/15] BLE ulangan 4 berjalan 60 dtk ...
+  OK : paket 3000 | loss 0.00% (tak sampai laptop 0.00%) | RTT median 51.7 ms, p95 103.1 ms
+[12/15] WIFI ulangan 4 berjalan 60 dtk ...
+  OK : paket 3000 | loss 1.27% (tak sampai laptop 0.20%) | RTT median 49.0 ms, p95 144.5 ms
+[13/15] BLE ulangan 5 berjalan 60 dtk ...
+  OK : paket 3000 | loss 0.00% (tak sampai laptop 0.00%) | RTT median 49.0 ms, p95 96.0 ms
+[14/15] WIFI ulangan 5 berjalan 60 dtk ...
+  OK : paket 3000 | loss 0.47% (tak sampai laptop 0.03%) | RTT median 46.4 ms, p95 137.5 ms
+[15/15] ADAPTIF ulangan 5 berjalan 60 dtk ...
+  OK : paket 3001 | loss 0.00% (tak sampai laptop 0.00%) | RTT median 50.2 ms, p95 101.7 ms | pindah 0x
+
+Selesai. 15/15 percobaan valid. Data: D:\Skripsi\sistem\gamepad_ta\host\data\S5
+Langkah berikut:  python analisis.py data\S5
+  [BLE terputus, mencoba menyambung ulang di latar]
+
 D:\Skripsi\sistem\gamepad_ta\host>python analisis.py data
-135 percobaan valid dianalisis. Hasil di: D:\Skripsi\sistem\gamepad_ta\host\hasil_analisis
+150 percobaan valid dianalisis. Hasil di: D:\Skripsi\sistem\gamepad_ta\host\hasil_analisis
 
 UJI STATISTIK - satuan analisis = percobaan (bukan paket)
 H0: tidak ada perbedaan rata-rata metrik antar metode komunikasi. alpha = 0.05
@@ -669,3 +718,5 @@ Estimasi latency satu arah median (ms)  [oneway_est_median_ms]
    ble      n= 5  rata2=    22.480  sd=    0.743
    wifi     n= 5  rata2=     9.505  sd=    1.262
    ANOVA sa
+
+D:\Skripsi\sistem\gamepad_ta\host>

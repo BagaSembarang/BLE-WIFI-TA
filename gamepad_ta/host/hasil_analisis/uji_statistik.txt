@@ -862,4 +862,95 @@ Jumlah handover  [handover_kali]
    Tukey ble vs wifi: selisih rata2=+0.000  p=1  
    Shapiro-Wilk residual: p=1.09e-05  -> normalitas ditolak, utamakan Kruskal-Wallis
 
+==============================================================================
+SKENARIO S5
+==============================================================================
+
+Packet loss (%)  [loss_pct]
+   adaptif  n= 5  rata2=     0.000  sd=    0.000
+   ble      n= 5  rata2=     0.000  sd=    0.000
+   wifi     n= 5  rata2=     2.847  sd=    3.248
+   ANOVA satu arah: F=3.843  p=0.0513  eta^2=0.390  -> tidak beda signifikan
+   Kruskal-Wallis (tanpa asumsi normal): H=13.291  p=0.0013
+   Shapiro-Wilk residual: p=3.13e-05  -> normalitas ditolak, utamakan Kruskal-Wallis
+
+Latency satu arah >100 ms (%)  [lambat100_pct]
+   adaptif  n= 5  rata2=     0.000  sd=    0.000
+   ble      n= 5  rata2=     0.000  sd=    0.000
+   wifi     n= 5  rata2=     8.169  sd=    9.286
+   ANOVA satu arah: F=3.870  p=0.05046  eta^2=0.392  -> tidak beda signifikan
+   Kruskal-Wallis (tanpa asumsi normal): H=13.325  p=0.001278
+   Shapiro-Wilk residual: p=0.000134  -> normalitas ditolak, utamakan Kruskal-Wallis
+
+Loss + latency satu arah >150 ms (%)  [buruk150_pct]
+   adaptif  n= 5  rata2=     0.000  sd=    0.000
+   ble      n= 5  rata2=     0.000  sd=    0.000
+   wifi     n= 5  rata2=     6.875  sd=    8.112
+   ANOVA satu arah: F=3.591  p=0.05994  eta^2=0.374  -> tidak beda signifikan
+   Kruskal-Wallis (tanpa asumsi normal): H=13.291  p=0.0013
+   Shapiro-Wilk residual: p=2.93e-05  -> normalitas ditolak, utamakan Kruskal-Wallis
+
+RTT median (ms)  [rtt_median_ms]
+   adaptif  n= 5  rata2=    49.712  sd=    1.989
+   ble      n= 5  rata2=    49.081  sd=    2.225
+   wifi     n= 5  rata2=    59.784  sd=   21.216
+   ANOVA satu arah: F=1.179  p=0.3409  eta^2=0.164  -> tidak beda signifikan
+   Kruskal-Wallis (tanpa asumsi normal): H=0.180  p=0.9139
+   Shapiro-Wilk residual: p=0.000778  -> normalitas ditolak, utamakan Kruskal-Wallis
+
+RTT p95 (ms)  [rtt_p95_ms]
+   adaptif  n= 5  rata2=    95.232  sd=    4.750
+   ble      n= 5  rata2=    93.596  sd=    6.214
+   wifi     n= 5  rata2=   256.454  sd=  155.392
+   ANOVA satu arah: F=5.424  p=0.02099  eta^2=0.475  -> BEDA signifikan
+   Kruskal-Wallis (tanpa asumsi normal): H=9.620  p=0.008148
+   Tukey adaptif vs ble: selisih rata2=+1.636  p=0.9995  
+   Tukey adaptif vs wifi: selisih rata2=-161.222  p=0.03702  *
+   Tukey ble vs wifi: selisih rata2=-162.858  p=0.03518  *
+   Shapiro-Wilk residual: p=0.000356  -> normalitas ditolak, utamakan Kruskal-Wallis
+
+Jitter (ms)  [jitter_ms]
+   adaptif  n= 5  rata2=    18.727  sd=    0.537
+   ble      n= 5  rata2=    18.471  sd=    0.613
+   wifi     n= 5  rata2=    26.751  sd=    2.567
+   ANOVA satu arah: F=45.846  p=2.402e-06  eta^2=0.884  -> BEDA signifikan
+   Kruskal-Wallis (tanpa asumsi normal): H=9.620  p=0.008148
+   Tukey adaptif vs ble: selisih rata2=+0.256  p=0.9634  
+   Tukey adaptif vs wifi: selisih rata2=-8.024  p=8.526e-06  *
+   Tukey ble vs wifi: selisih rata2=-8.280  p=6.167e-06  *
+   Shapiro-Wilk residual: p=0.0347  -> normalitas ditolak, utamakan Kruskal-Wallis
+
+Estimasi latency satu arah median (ms)  [oneway_est_median_ms]
+   adaptif  n= 5  rata2=    22.294  sd=    0.755
+   ble      n= 5  rata2=    22.017  sd=    0.904
+   wifi     n= 5  rata2=    29.847  sd=   10.578
+   ANOVA satu arah: F=2.614  p=0.1142  eta^2=0.303  -> tidak beda signifikan
+   Kruskal-Wallis (tanpa asumsi normal): H=5.660  p=0.05901
+   Shapiro-Wilk residual: p=0.000476  -> normalitas ditolak, utamakan Kruskal-Wallis
+
+Jeda masukan terpanjang (ms)  [stall_maks_ms]
+   adaptif  n= 5  rata2=    25.350  sd=    0.784
+   ble      n= 5  rata2=    23.840  sd=    1.145
+   wifi     n= 5  rata2=  1067.791  sd= 1027.134
+   ANOVA satu arah: F=5.158  p=0.02418  eta^2=0.462  -> BEDA signifikan
+   Kruskal-Wallis (tanpa asumsi normal): H=11.180  p=0.003735
+   Tukey adaptif vs ble: selisih rata2=+1.510  p=1  
+   Tukey adaptif vs wifi: selisih rata2=-1042.440  p=0.04106  *
+   Tukey ble vs wifi: selisih rata2=-1043.950  p=0.04077  *
+   Shapiro-Wilk residual: p=0.00175  -> normalitas ditolak, utamakan Kruskal-Wallis
+
+Jeda >100 ms (kali)  [stall_gt100_kali]
+   adaptif  n= 5  rata2=     0.000  sd=    0.000
+   ble      n= 5  rata2=     0.000  sd=    0.000
+   wifi     n= 5  rata2=     8.200  sd=    9.960
+   ANOVA satu arah: F=3.389  p=0.0681  eta^2=0.361  -> tidak beda signifikan
+   Kruskal-Wallis (tanpa asumsi normal): H=13.325  p=0.001278
+   Shapiro-Wilk residual: p=4.8e-05  -> normalitas ditolak, utamakan Kruskal-Wallis
+
+Jumlah handover  [handover_kali]
+   adaptif  n= 5  rata2=     0.000  sd=    0.000
+   ble      n= 5  rata2=     0.000  sd=    0.000
+   wifi     n= 5  rata2=     0.000  sd=    0.000
+   (semua nilai identik, uji tidak relevan)
+
 Catatan: jumlah percobaan per kelompok kecil, sehingga kekuatan uji terbatas. Laporkan ukuran efek (eta^2) dan CI 95%, bukan hanya nilai p.
