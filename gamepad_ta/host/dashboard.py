@@ -31,8 +31,10 @@ import analisis as A  # noqa: E402
 WARNA_METODE = {"ble": "#2f6fdb", "wifi": "#e07b00", "adaptif": "#2a9d4b"}
 WARNA_VARIAN = ["#7a4fbf", "#c2417a", "#4a8a8a", "#8a6a2a"]
 WARNA_LINK = {0: "#2f6fdb", 1: "#e07b00"}
-WARNA_PEMICU = {"latency": "#d1495b", "loss": "#edae49", "jitter": "#66a182", "rssi": "#00798c", "putus": "#30343f", "-": "#999999",
-                "kembali (BLE pulih)": "#2a9d4b"}
+WARNA_PEMICU = {"latency": "#e15759", "loss": "#f28e2b", "jitter": "#edc948", "rssi": "#17becf", "putus": "#b07aa1", "-": "#9e9e9e",
+                "kembali (BLE pulih)": "#59a14f"}
+TEKS_LABEL = "#111111"          # teks di dalam kotak berwarna: selalu gelap agar terbaca di tema gelap maupun terang
+WARNA_LINK_AKTIF = "#9e9e9e"
 URUT_METODE = {"ble": 0, "wifi": 1, "adaptif": 2}
 LABEL_METRIK = dict(A.METRIK_UTAMA)
 KIND = {1: "keputusan pindah", 2: "handover selesai"}
@@ -202,7 +204,8 @@ with tab_ring:
         piv = df_n.value_counts().unstack(fill_value=0)
         piv = piv[sorted(piv.columns, key=urut_metode)]
         target = st.number_input("Target ulangan per metode", 1, 20, 5, key="target")
-        st.dataframe(piv.style.map(lambda v: "background-color:#f6d5d5" if v < target else "background-color:#d7efd9"),
+        st.dataframe(piv.style.map(lambda v: ("background-color:#f6d5d5;color:#111111" if v < target
+                                              else "background-color:#d7efd9;color:#111111")),
                      width="stretch")
 
     st.subheader("Daftar sesi")
@@ -394,26 +397,30 @@ with tab_detail:
             fig.add_hline(y=P["t_return"], line=dict(color="#2a9d4b", dash="dash"), row=2, col=1,
                           annotation_text=f"ambang kembali {P['t_return']:.0f}", annotation_position="top left")
             fig.add_trace(go.Scatter(x=qt, y=Q["link_aktif"], mode="lines", line_shape="hv", name="link aktif",
-                                     line=dict(color="#555555")), row=3, col=1)
+                                     line=dict(color=WARNA_LINK_AKTIF, width=2)), row=3, col=1)
             fig.update_yaxes(tickvals=[0, 1], ticktext=["BLE", "Wi-Fi"], range=[-0.3, 1.3], row=3, col=1)
             fig.update_yaxes(range=[0, 105], row=2, col=1)
         if not E.empty:
-            for _, r in E[E["kind"] == 1].iterrows():
+            for j, (_, r) in enumerate(E[E["kind"] == 1].iterrows()):
                 x = r["t_us"] / 1e6
                 pm = A.PEMICU.get(int(r["pemicu"]), "?")
                 al = A.ALASAN.get(int(r["alasan"]), "?")
+                kat = "kembali (BLE pulih)" if al == "kembali" else pm
+                warna = WARNA_PEMICU.get(kat, "#9e9e9e")
                 for rr in range(1, nbaris + 1):
-                    fig.add_vline(x=x, line=dict(color=WARNA_PEMICU.get(pm, "#000"), dash="dash", width=1.2), row=rr, col=1)
-                teks = f"{A.LINKNAMA[int(r['dari'])]}→{A.LINKNAMA[int(r['ke'])]}<br>{al if pm == '-' else pm}"
-                fig.add_annotation(x=x, y=1, yref="paper", yshift=24, text=teks, showarrow=False, font=dict(size=10),
-                                   bgcolor="rgba(255,255,255,0.85)", bordercolor=WARNA_PEMICU.get(pm, "#999"), yanchor="bottom")
+                    fig.add_vline(x=x, line=dict(color=warna, dash="dash", width=1.5), row=rr, col=1)
+                teks = f"{A.LINKNAMA[int(r['dari'])]}→{A.LINKNAMA[int(r['ke'])]}<br>{'kembali' if al == 'kembali' else pm}"
+                fig.add_annotation(x=x, y=1, yref="paper", yshift=8 + (j % 3) * 30, text=teks, showarrow=False,
+                                   font=dict(size=10, color=TEKS_LABEL), bgcolor=warna, opacity=0.95,
+                                   bordercolor=warna, borderpad=2, yanchor="bottom")
         if log_y:
             fig.update_yaxes(type="log", row=1, col=1)
         fig.update_xaxes(title_text="waktu sesi (detik)", row=nbaris, col=1)
-        fig.update_layout(height=800 if ada_skor else 440, legend=dict(orientation="h", y=-0.13, yanchor="top"), margin=dict(t=120, b=110),
+        fig.update_layout(height=820 if ada_skor else 460, legend=dict(orientation="h", y=-0.13, yanchor="top"), margin=dict(t=150, b=110),
                           title=dict(text=f"Linimasa sesi: {label_sesi(s)}", y=0.99, yanchor="top"))
         st.plotly_chart(fig, width="stretch", config=GRAFIK_CFG)
-        st.caption("Garis putus vertikal = keputusan perpindahan (warna menurut pemicu). Probe link cadangan tersembunyi; "
+        st.caption("Garis putus vertikal = keputusan perpindahan. Warna: merah = latency, oranye = loss, kuning = jitter, "
+                   "biru muda = RSSI, ungu = putus (jalur darurat), hijau = kembali ke BLE. Probe link cadangan tersembunyi; "
                    "klik di legenda untuk menampilkan.")
 
         kiri, kanan = st.columns([3, 2])
